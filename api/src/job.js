@@ -188,7 +188,6 @@ class Job {
 
             proc.stderr.on('data', async data => {
                if (stderr.length > 1024) {
-                    this.logger.info(`stderr length exceeded`);
                     try {
                         process.kill(proc.pid, 'SIGKILL');
                     }
