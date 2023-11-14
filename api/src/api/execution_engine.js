@@ -2,15 +2,11 @@ const expresss = require('express');
 const router = expresss.Router();
 
 //Jobs to Run
-const {Job} = require('../job')
+const { Job } = require('../job')
 
-type Job_Info = {
-    language: string,
-    args: any,
-    code: string
-}
 
-function get_job({language, args, code}: Job_Info){
+
+function get_job({language, args, code}){
     return new Promise((resolve, reject)=> {
         if (!language || typeof language !== 'string'){
             reject({
@@ -26,8 +22,8 @@ function get_job({language, args, code}: Job_Info){
     })
 }
 
-router.post('/execute', async (req:any,res:any)=>{
-    let job: any;
+router.post('/execute', async (req,res)=>{
+    let job;
     try{
         job = await get_job(req.body);
     } catch(e) {

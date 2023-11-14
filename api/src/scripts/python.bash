@@ -1,0 +1,2 @@
+# Run Python
+python3 "$@"

@@ -32,17 +32,17 @@ const DATA_DIRECTORY = '/V2_Engine';
     app.use(body_parser.json())
 
     //Error Handler
-    app.use((err: any,req:any,res:any,next:any)=>{
+    app.use((err,req,res,next)=>{
         return res.status(400).send({stack: err.stack})
     })
 
     app.use('/api/v1', execution_engine);
 
-    app.get('/', (req:any,res:any,next:any)=>{
+    app.get('/', (req,res,next)=>{
         return res.status(200).send({message: "Engine is Running"})
     })
 
-    app.use((req:any, res:any, next:any)=>{
+    app.use((req, res, next)=>{
         return res.staus(404).send({message:'Not Found'})
     })
 
