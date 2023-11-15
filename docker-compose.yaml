@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+    api:
+        image: ajkraus04/algoapi
+        container_name: algo_mas_api
+        restart: always
+        ports:
+            - 8080:8080
+        tmpfs:
+            - /V2_Engine/jobs:exec,uid=1000,gid=1000,mode=711
+            - /tmp:exec

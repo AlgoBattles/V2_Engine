@@ -1,8 +1,8 @@
 const {v4: uuidv4} = require('uuid');
 const cp = require('child_process');
-const paths = require('path');
-const fs2 = require('fs/promises');
-const fss2 = require('fs');
+const path = require('path');
+const fs = require('fs/promises');
+const fss = require('fs');
 const { Console } = require('console');
 
 
@@ -18,83 +18,95 @@ let gid = 0;
 let remaining_job_spaces = 64;
 let job_queue = [];
 
+
 class Job {
     #active_timeouts;
     #active_parent_processes;
 
-    constructor({ runtime, code, args }) {
-        this.uuid = uuidv4();
+    constructor( {language, code, args} ) {
+        try{
+            this.uuid = uuidv4();
 
 
-        this.runtime = runtime;
-
-        //Must be an object with the content and the name
-        this.code = code
-
-        this.args = args;
-     
-
-        this.#active_timeouts = [];
-        this.#active_parent_processes = [];
-
-        this.timeouts = 3000;
-
-        this.uid = config.runner_uid_min + uid;
-        this.gid = config.runner_gid_min + gid;
-
-        uid++;
-        gid++;
-
-        uid %= 1500 - 1001 + 1;
-        gid %= 1500 - 1001 + 1;
-
-
-
-        this.state = job_states.READY;
-
-        this.dir = path.join(
-            '/V2_Engine',
-            'jobs',
-            this.uuid
-        );
+            this.runtime = language;
+    
+            //Must be an object with the content and the name
+            this.code = code
+    
+            this.args = args;
+         
+    
+            this.#active_timeouts = [];
+            this.#active_parent_processes = [];
+    
+            this.timeouts = 3000;
+    
+            this.uid = 1001 + uid;
+            this.gid = 1001 + gid;
+    
+            uid++;
+            gid++;
+    
+            uid %= 1500 - 1001 + 1;
+            gid %= 1500 - 1001 + 1;
+    
+            this.python_test_code = "\nimport sys\nimport json\nglobfunc=globals()['addNums']\ntestCases = json.loads(sys.argv[1])\nresults=[]\nfor case in testCases:\n    results.append([globfunc(*case[0]),case[1]])\nprint(results)"
+            this.javascript_test_code = `let testCases = JSON.parse(process.argv[2]);let results=[];for (let i=0;i<testCases.length;i++){results.push([`+this.code.name+'(...testCases[i][0]),testCases[i][1]])}console.log(results)'
+            this.state = job_states.READY;
+    
+            this.dir = path.join(
+                '/V2_Engine',
+                'jobs',
+                this.uuid
+            );
+        } catch(e){
+            console.log(e)
+        }
+       
     }
 
     async prime() {
-        if (remaining_job_spaces < 1) {
-            await new Promise(resolve => {
-                job_queue.push(resolve);
+        try{
+            if (remaining_job_spaces < 1) {
+                await new Promise(resolve => {
+                    job_queue.push(resolve);
+                });
+            }
+           
+            remaining_job_spaces--;
+    
+    
+            //Transferring Ownership
+    
+            await fs.mkdir(this.dir, { mode: 0o700 });
+            await fs.chown(this.dir, this.uid, this.gid);
+    
+        
+            const file_path = path.join(this.dir, this.code.name);
+            const rel = path.relative(this.dir, file_path);
+            this.code.content += this.runtime === 'python' ? this.python_test_code: this.javascript_test_code;
+            const file_content = Buffer.from(this.code.content, 'utf-8');
+    
+            if (rel.startsWith('..'))
+                throw Error(
+                    `File path "${this.code.name}" tries to escape parent directory: ${rel}`
+                );
+    
+            await fs.mkdir(path.dirname(file_path), {
+                recursive: true,
+                mode: 0o700,
             });
+            await fs.chown(path.dirname(file_path), this.uid, this.gid);
+            
+            await fs.writeFile(file_path, file_content);
+            await fs.chown(file_path, this.uid, this.gid);
+            
+            //Job is now primed
+            this.state = job_states.PRIMED;
+        } catch(e) {
+            console.log(e)
         }
        
-        remaining_job_spaces--;
-
-
-        //Transferring Ownership
-
-        await fs.mkdir(this.dir, { mode: 0o700 });
-        await fs.chown(this.dir, this.uid, this.gid);
-
-   
-        const file_path = path.join(this.dir, code.name);
-        const rel = path.relative(this.dir, file_path);
-        const file_content = Buffer.from(code.content, 'utf-8');
-
-        if (rel.startsWith('..'))
-            throw Error(
-                `File path "${code.name}" tries to escape parent directory: ${rel}`
-            );
-
-        await fs.mkdir(path.dirname(file_path), {
-            recursive: true,
-            mode: 0o700,
-        });
-        await fs.chown(path.dirname(file_path), this.uid, this.gid);
-
-        await fs.write_file(file_path, file_content);
-        await fs.chown(file_path, this.uid, this.gid);
-        
-        //Job is now primed
-        this.state = job_states.PRIMED;
 
         
     }
@@ -104,7 +116,7 @@ class Job {
     //Clear Active Timeouts
     exit_cleanup() {
         for (const timeout of this.#active_timeouts) {
-            clear_timeout(timeout);
+            clearTimeout(timeout);
         }
         this.#active_timeouts = [];
         
@@ -128,127 +140,129 @@ class Job {
 
     async safe_call(file, args, timeout) {
         return new Promise((resolve, reject) => {
-
-            const prlimit = [
-                'prlimit',
-                '--nproc=' + 64,
-                '--nofile=' + 1024,
-                '--fsize=' + 10000000,
-            ];
-
-            const timeout_call = [
-                'timeout',
-                '-s',
-                '9',
-                Math.ceil(timeout / 1000),
-            ];
-
-            const proc_call = [
-                'nice',
-                ...timeout_call,
-                ...prlimit,
-                'bash',
-                file,
-                ...args,
-            ];
-
-            var stdout = '';
-            var stderr = '';
-            var output = '';
-
-            const proc = cp.spawn(proc_call[0], proc_call.splice(1), {
-                stdio: 'pipe',
-                cwd: this.dir,
-                uid: this.uid,
-                gid: this.gid,
-                detached: true, //give this process its own process group
-            });
-
-            this.#active_parent_processes.push(proc);
-
-          
-            proc.stdin.write(this.stdin);
-            proc.stdin.end();
-            proc.stdin.destroy();
-           
-
-            const kill_timeout =
-                (timeout >= 0 &&
-                    set_timeout(async _ => {
+            try{
+                const prlimit = [
+                    'prlimit',
+                    '--nproc=' + 64,
+                    '--nofile=' + 1024,
+                    '--fsize=' + 10000000,
+                ];
+    
+                const timeout_call = [
+                    'timeout',
+                    '-s',
+                    '9',
+                    Math.ceil(timeout / 1000),
+                ];
+        
+                const proc_call = [
+                    'nice',
+                    ...timeout_call,
+                    ...prlimit,
+                    'bash',
+                    file,
+                    ...args,
+                ];
+    
+                var stdout = '';
+                var stderr = '';
+                var output = '';
+    
+                const proc = cp.spawn(proc_call[0], proc_call.splice(1), {
+                    stdio: 'pipe',
+                    cwd: this.dir,
+                    uid: this.uid,
+                    gid: this.gid,
+                    detached: true, //give this process its own process group
+                });
+    
+                this.#active_parent_processes.push(proc);
+    
+              
+                proc.stdin.end();
+                proc.stdin.destroy();
+               
+    
+                const kill_timeout =
+                    (timeout >= 0 &&
+                        setTimeout(async _ => {
+                            try {
+                                process.kill(proc.pid, 'SIGKILL');
+                            }
+                            catch (e) {
+                                // Could already be dead and just needs to be waited on
+                               console.log(e)
+                            }
+                        }, timeout)) ||
+                    null;
+                this.#active_timeouts.push(kill_timeout);
+    
+                proc.stderr.on('data', async data => {
+                   if (stderr.length > 1024) {
                         try {
                             process.kill(proc.pid, 'SIGKILL');
                         }
                         catch (e) {
                             // Could already be dead and just needs to be waited on
-                           console.log(e)
+                           console.log("Error while killing process.")
                         }
-                    }, timeout)) ||
-                null;
-            this.#active_timeouts.push(kill_timeout);
-
-            proc.stderr.on('data', async data => {
-               if (stderr.length > 1024) {
-                    try {
-                        process.kill(proc.pid, 'SIGKILL');
+                    } else {
+                        stderr += data;
+                        output += data;
                     }
-                    catch (e) {
-                        // Could already be dead and just needs to be waited on
-                       console.log("Error while killing process.")
+                });
+    
+                proc.stdout.on('data', async data => {
+                    if (stdout.length > this.runtime.output_max_size) {
+                        console.log("Length Exceeded")
+                        try {
+                            process.kill(proc.pid, 'SIGKILL');
+                        }
+                        catch (e) {
+                            // Could already be dead and just needs to be waited on
+                            console.log(e)
+                        }
+                    } else {
+                        stdout += data;
+                        output += data;
                     }
-                } else {
-                    stderr += data;
-                    output += data;
-                }
-            });
-
-            proc.stdout.on('data', async data => {
-                if (stdout.length > this.runtime.output_max_size) {
-                    console.log("Length Exceeded")
-                    try {
-                        process.kill(proc.pid, 'SIGKILL');
-                    }
-                    catch (e) {
-                        // Could already be dead and just needs to be waited on
-                        console.log(e)
-                    }
-                } else {
-                    stdout += data;
-                    output += data;
-                }
-            });
-
-            proc.on('exit', () => this.exit_cleanup());
-
-            proc.on('close', (code, signal) => {
-                this.close_cleanup();
-
-                resolve({ stdout, stderr, code, signal, output });
-            });
-
-            proc.on('error', err => {
-                this.exit_cleanup();
-                this.close_cleanup();
-
-                reject({ error: err, stdout, stderr, output });
-            });
+                });
+    
+                proc.on('exit', () => this.exit_cleanup());
+    
+                proc.on('close', (code, signal) => {
+                    this.close_cleanup();
+    
+                    resolve({ stdout, stderr, code, signal, output });
+                });
+    
+                proc.on('error', err => {
+                    this.exit_cleanup();
+                    this.close_cleanup();
+    
+                    reject({ error: err, stdout, stderr, output });
+                });
+            } catch(e){
+                console.log(e)
+            }
+            
         });
     }
 
     async execute() {
-        if (this.state !== job_states.PRIMED) {
+        try{
+            if (this.state !== job_states.PRIMED) {
             throw new Error(
                 'Job must be in primed state, current state: ' +
                 this.state.toString()
             );
         }
 
-   
-
         //Running Code
         let run = await this.safe_call(
             //This Run Bash file needs to be based off the language
             path.join(__dirname, `./scripts/${this.runtime}.bash`),
-            [file.name, ...this.args],
+            [this.code.name, this.args],
             this.timeouts,
         );
             
@@ -258,6 +272,10 @@ class Job {
             run,
             language: this.runtime
         };
+        } catch(e) {
+            console.log(e)
+        }
+        
     }
 
     cleanup_processes(dont_wait = []) {
@@ -267,12 +285,12 @@ class Job {
         while (processes.length > 0) {
             processes = [];
 
-            const proc_ids = fss.readdir_sync('/proc');
+            const proc_ids = fss.readdirSync('/proc');
 
             processes = proc_ids.map(proc_id => {
                 if (isNaN(proc_id)) return -1;
                 try {
-                    const proc_status = fss.read_file_sync(
+                    const proc_status = fss.readFileSync(
                         path.join('/proc', proc_id, 'status')
                     );
                     const proc_lines = proc_status.to_string().split('\n');
@@ -389,3 +407,4 @@ class Job {
 module.exports = {
     Job,
 };
+

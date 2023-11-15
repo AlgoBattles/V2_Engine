@@ -15,11 +15,11 @@ const DATA_DIRECTORY = '/V2_Engine';
 
 (async () => {
     let data_path = path.join(DATA_DIRECTORY,JOB_DIRECTORY);
-
-    if (!fss.exists_sync(data_path)) {
+    if (!fss.existsSync(data_path)) {
         try {
             //make the directory
-            fss.mkdir_sync(data_path);
+            fss.mkdirSync(data_path);
+            
         } catch(e) {
             console.log(e)
         }
@@ -43,7 +43,7 @@ const DATA_DIRECTORY = '/V2_Engine';
     })
 
     app.use((req, res, next)=>{
-        return res.staus(404).send({message:'Not Found'})
+        return res.status(404).send({message:'Not Found'})
     })
 
     app.listen(8080, ()=> {
