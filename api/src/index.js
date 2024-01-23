@@ -18,7 +18,9 @@ const DATA_DIRECTORY = '/V2_Engine';
     if (!fss.existsSync(data_path)) {
         try {
             //make the directory
-            fss.mkdirSync(data_path);
+            // fss.mkdirSync(data_path);
+            await fs.mkdir(data_path, { recursive: true });
+            await fs.chmod(data_path, 0o711);
             
         } catch(e) {
             console.log(e)
