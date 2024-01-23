@@ -50,8 +50,8 @@ class Job {
             uid %= 1500 - 1001 + 1;
             gid %= 1500 - 1001 + 1;
     
-            this.python_test_code = "\nimport sys\nimport json\nglobfunc=globals()['addNums']\ntestCases = json.loads(sys.argv[1])\nresults=[]\nfor case in testCases:\n    results.append([globfunc(*case[0]),case[1]])\nprint(results)"
-            this.javascript_test_code = `let testCases = JSON.parse(process.argv[2]);let results=[];for (let i=0;i<testCases.length;i++){results.push([`+this.code.name+'(...testCases[i][0]),testCases[i][1]])}console.log(results)'
+            this.python_test_code = "\nimport sys\nimport json\nglobfunc=globals()[\""+this.code.name+"\"]\ntestCases = json.loads(sys.argv[1])\nresults=[]\nfor case in testCases:\n    results.append([globfunc(*case[0]),case[1]])\nprint(results)"
+            this.javascript_test_code = `let testCases = JSON.parse(process.argv[2]); let results=[];for (let i=0;i<testCases.length;i++){results.push([`+this.code.name+'(...testCases[i][0]),testCases[i][1]])};console.log(JSON.stringify(results));'
             this.state = job_states.READY;
     
             this.dir = path.join(
