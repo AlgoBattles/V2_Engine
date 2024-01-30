@@ -33,10 +33,25 @@ const DATA_DIRECTORY = '/V2_Engine';
     app.use(body_parser.urlencoded({extended: true}))
     app.use(body_parser.json())
 
+    // const API_KEY = 'a3f1b7b6cde1234567890abcdef1234567890abcd';
+    // // Middleware for API key check
+    // function checkApiKey(req, res, next) {
+    //     const authHeader = req.headers.authorization;
+
+    //     if (!authHeader || authHeader !== API_KEY) {
+    //         return res.status(401).json({ message: 'Unauthorized' });
+    //     }
+
+    //     next();
+    // }
+
     //Error Handler
     app.use((err,req,res,next)=>{
         return res.status(400).send({stack: err.stack})
     })
+
+    // Add API key check middleware here
+    // app.use(checkApiKey);
 
     app.use('/api/v1', execution_engine);
 
