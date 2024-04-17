@@ -26,21 +26,14 @@ class Job {
     constructor( {language, code, args} ) {
         try{
             this.uuid = uuidv4();
-
-
             this.runtime = language;
     
-            //Must be an object with the content and the name
-            this.code = code
-    
+            // Must be an object with the content and the name
+            this.code = code;
             this.args = args;
-         
-    
             this.#active_timeouts = [];
             this.#active_parent_processes = [];
-    
             this.timeouts = 3000;
-    
             this.uid = 1001 + uid;
             this.gid = 1001 + gid;
     
@@ -49,9 +42,24 @@ class Job {
     
             uid %= 1500 - 1001 + 1;
             gid %= 1500 - 1001 + 1;
-    
-            this.python_test_code = "\nimport sys\nimport json\nglobfunc=globals()[\""+this.code.name+"\"]\ntestCases = json.loads(sys.argv[1])\nresults=[]\nfor case in testCases:\n    results.append([globfunc(*case[0]),case[1]])\nprint(results)"
-            this.javascript_test_code = `let testCases = JSON.parse(process.argv[2]); let results=[];for (let i=0;i<testCases.length;i++){results.push([`+this.code.name+'(...testCases[i][0]),testCases[i][1]])};console.log(JSON.stringify(results));'
+            
+            // this.python_test_code = "\nimport sys\nimport json\nfrom io import StringIO\nimport contextlib\n\n# Redirect stdout to stderr for all print statements inside the function\nwith contextlib.redirect_stdout(sys.stderr):\n    globfunc = globals()[\""+this.code.name+"\"]\n    testCases = json.loads(sys.argv[1])\n\n    # Create a buffer to capture output, redirect stdout to this buffer\n    result_buffer = StringIO()\n    with contextlib.redirect_stdout(result_buffer):\n        results = []\n        for case in testCases:\n            results.append([globfunc(*case[0]), case[1]])\n\n    # Output results to the buffer\n    print(results)\n\n# Reset stdout to the original\nsys.stdout = sys.__stdout__\n\n# Output the results from the buffer to original stdout\nprint(result_buffer.getvalue())"
+
+            this.python_test_code = "\nimport sys\nimport json\nfrom io import StringIO\nimport contextlib\n\n# Redirect stdout to stderr for all print statements inside the function\nwith contextlib.redirect_stdout(sys.stderr):\n    globfunc = globals()['" + this.code.name + "']\n    testCases = json.loads(sys.argv[1])\n\n    # Create a buffer to capture output, redirect stdout to this buffer\n    result_buffer = StringIO()\n    with contextlib.redirect_stdout(result_buffer):\n        results = []\n        for case in testCases:\n            result = globfunc(*case[0])\n            if result is None:\n                result = None  # json.dumps will convert this to 'null'\n            elif isinstance(result, bool):\n                result = bool(result)  # json.dumps will handle True/False conversion\n            results.append([result, case[1]])\n\n    # Output results to the buffer using json.dumps to ensure JSON-friendly output\n    json_output = json.dumps(results)\n    print(json_output)\n\n# Reset stdout to the original\nsys.stdout = sys.__stdout__\n\n# Output the results from the buffer to original stdout\nprint(result_buffer.getvalue())"
+            this.javascript_test_code = `
+              const originalConsoleLog = console.log;
+              console.log = console.error; // Redirect logs to stderr
+              let testCases = JSON.parse(process.argv[2]);
+              let results = [];
+              for (let i = 0; i < testCases.length; i++) {
+                  results.push([${this.code.name}(...testCases[i][0]), testCases[i][1]]);
+              }
+
+              // Reset console.log for final output
+              console.log = originalConsoleLog;
+              console.log(JSON.stringify(results));
+            `
+            
             this.state = job_states.READY;
     
             this.dir = path.join(
@@ -105,14 +113,8 @@ class Job {
             this.state = job_states.PRIMED;
         } catch(e) {
             console.log(e)
-        }
-       
-
-        
+        } 
     }
-
-
-
     //Clear Active Timeouts
     exit_cleanup() {
         for (const timeout of this.#active_timeouts) {
@@ -198,6 +200,7 @@ class Job {
                 this.#active_timeouts.push(kill_timeout);
     
                 proc.stderr.on('data', async data => {
+                  const errorData = data.toString();
                    if (stderr.length > 1024) {
                         try {
                             process.kill(proc.pid, 'SIGKILL');
@@ -207,12 +210,12 @@ class Job {
                            console.log("Error while killing process.")
                         }
                     } else {
-                        stderr += data;
-                        output += data;
+                        stderr += errorData;
                     }
                 });
     
                 proc.stdout.on('data', async data => {
+                    const outputData = data.toString();
                     if (stdout.length > this.runtime.output_max_size) {
                         console.log("Length Exceeded")
                         try {
@@ -220,37 +223,80 @@ class Job {
                         }
                         catch (e) {
                             // Could already be dead and just needs to be waited on
-                            console.log(e)
+                            console.log("error killing process 1", e)
                         }
                     } else {
-                        stdout += data;
-                        output += data;
+                        stdout += outputData;
+                        output += outputData;
                     }
                 });
     
                 proc.on('exit', () => this.exit_cleanup());
+
+                function mergeAndValidateJSON(output) {
+                  // Normalize whitespace and merge JSON fragments
+                  let preparedOutput = output.replace(/\s+/g, '').replace(/\]\[/g, '],[');
+                  // Try validating and parsing the JSON
+                  try {
+                      return JSON.parse(preparedOutput);
+                  } catch (e) {
+                      console.log('output was', output)
+                      throw new Error("Invalid JSON format: " + e.message);
+                  }
+              }
     
                 proc.on('close', (code, signal) => {
-                    this.close_cleanup();
-    
-                    resolve({ stdout, stderr, code, signal, output });
-                });
-    
+                  this.close_cleanup(); // Perform cleanup operations
+                      if (code === 0) {
+                        // hacky fix for the time being - switches stdout and stderr
+                        if (this.runtime === 'python') {
+                          const parsedOutput = mergeAndValidateJSON(stderr)
+                          const logs = stdout
+                          resolve({
+                            stdout: parsedOutput, // Return parsed output
+                            stderr: logs,
+                            code,
+                            signal,
+                            output: parsedOutput // Assuming `output` should also be the parsed JSON
+                        });
+                        } else {
+                          const parsedOutput = mergeAndValidateJSON(stdout);
+                          resolve({
+                              stdout: parsedOutput, // Return parsed output
+                              stderr,
+                              code,
+                              signal,
+                              output: parsedOutput // Assuming `output` should also be the parsed JSON
+                          });
+                        }
+                      } else if (code === 1) {
+                        resolve({
+                          stdout,
+                          stderr,
+                          code,
+                          signal,
+                          output,
+                      });
+                      }
+                  })
                 proc.on('error', err => {
                     this.exit_cleanup();
                     this.close_cleanup();
-    
+                    console.log('error parsing json 2 ')
                     reject({ error: err, stdout, stderr, output });
                 });
-            } catch(e){
-                console.log(e)
-            }
+            } catch (error) {
+              reject({
+                  error: 'Failed to initiate process',
+                  details: error.message
+              });
+          }
             
         });
     }
 
     async execute() {
-        try{
+        try {
             if (this.state !== job_states.PRIMED) {
             throw new Error(
                 'Job must be in primed state, current state: ' +
@@ -273,7 +319,7 @@ class Job {
             language: this.runtime
         };
         } catch(e) {
-            console.log(e)
+            console.log("error while running code", e)
         }
         
     }
@@ -336,7 +382,7 @@ class Job {
                     process.kill(proc, 'SIGSTOP');
                 } catch (e) {
                     // Could already be dead
-                    console.log(e)
+                    console.log("error killing process", e)
                 }
             }
 
@@ -346,7 +392,7 @@ class Job {
                     process.kill(proc, 'SIGKILL');
                 } catch (e) {
                     // Could already be dead and just needs to be waited on
-                    console.log(e)
+                    console.log("error killing process", e)
                 }
 
                 to_wait.push(proc);
@@ -382,7 +428,7 @@ class Job {
                     }
                 } catch (e) {
                     // File was somehow deleted in the time that we read the dir to when we checked the file
-                   console.log(e)
+                   console.log("error while cleaning up filesystem", e)
                 }
             }
         }

@@ -1,5 +1,5 @@
-const expresss = require('express');
-const router = expresss.Router();
+const express = require('express');
+const router = express.Router();
 
 //Jobs to Run
 const { Job } = require('../job');
@@ -31,14 +31,13 @@ router.post('/execute', async (req,res)=>{
     }
 
     try {
-        
         await job.prime();
-        
         let result = await job.execute();
-       
         if (result.run === undefined){
             result.run = result.compile
         }
+        console.log('result obj is')
+        console.log(JSON.stringify(result, null))
         return res.status(200).json(result);   
     } catch(e) {
         return res.status(500).send(e);
